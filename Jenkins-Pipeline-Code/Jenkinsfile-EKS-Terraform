@@ -1,80 +1,96 @@
+properties([
+    parameters([
+        string(
+            defaultValue: 'variables.tfvars',
+            description: 'Specify the file name',
+            name: 'File-Name'
+        ),
+        choice(
+            choices: ['apply', 'destroy'],
+            description: 'Select Terraform action',
+            name: 'Terraform-Action'
+        )
+    ])
+])
+
 pipeline {
     agent any
-    stage('Checkout from Git') {
-    steps {
-        git(
-            branch: 'master',
-            url: 'https://github.com/Manjunathamanjuu/e2e-k8s-project1.git'
-        )
-    }
-}
+
+    stages {
+        stage('Checkout from Git') {
+            steps {
+                git(
+                    branch: 'master',
+                    url: 'https://github.com/Manjunathamanjuu/e2e-k8s-project1.git'
+                )
+            }
+        }
+
         stage('Initializing Terraform') {
             steps {
                 withAWS(credentials: 'aws-key', region: 'ap-southeast-2') {
-                dir('EKS-TF') {
-                    script {
-                        sh '''
-                        set +e
-                        output=$(terraform init -no-color 2>&1)
-                        status=$?
-                        set -e
-
-                        printf '%s\\n' "$output"
-
-                        if [ "$status" -eq 0 ]; then
-                            echo "Terraform backend initialized successfully."
-                        elif printf '%s\\n' "$output" | grep -Fq "Backend configuration changed"; then
-                            echo "Backend configuration changed. Reinitializing with -reconfigure..."
-                            terraform init -reconfigure
-                        else
-                            echo "Terraform initialization failed."
-                            exit "$status"
-                        fi
-                        '''
-                    }
-                }
-                }
-            }
-        }
-        stage('Validate Terraform Code') {
-            steps {
-                withAWS(credentials: 'aws-key', region: 'ap-southeast-2') {
-                dir('EKS-TF') {
-                    script {
-                        sh 'terraform validate'
-                    }
-                }
-                }
-            }
-        }
-        stage('Terraform Plan') {
-            steps {
-                withAWS(credentials: 'aws-key', region: 'ap-southeast-2') {
-                dir('EKS-TF') {
-                    script {
-                        sh "terraform plan -var-file=${params.'File-Name'} -lock=false"
-                    }
-                }
-                }
-            }
-        }
-        stage('Terraform Action') {
-            steps {
-                withAWS(credentials: 'aws-key', region: 'ap-southeast-2') { 
-                script {
-                    echo "${params.'Terraform-Action'}"
                     dir('EKS-TF') {
                         script {
-                            if (params.'Terraform-Action' == 'apply') {
-                                sh "terraform apply -auto-approve -lock=false -var-file='${params.'File-Name'}'"
-                            } else if (params.'Terraform-Action' == 'destroy') {
-                                sh "terraform destroy -auto-approve -lock=false -var-file='${params.'File-Name'}'"
-                            } else {
-                                error "Invalid value for Terraform-Action: ${params.'Terraform-Action'}"
-                            }
+                            sh '''
+                                set +e
+                                output=$(terraform init -no-color 2>&1)
+                                status=$?
+                                set -e
+
+                                printf '%s\\n' "$output"
+
+                                if [ "$status" -eq 0 ]; then
+                                    echo "Terraform backend initialized successfully."
+                                elif printf '%s\\n' "$output" | grep -Fq "Backend configuration changed"; then
+                                    echo "Backend configuration changed. Reinitializing with -reconfigure..."
+                                    terraform init -reconfigure
+                                else
+                                    echo "Terraform initialization failed."
+                                    exit "$status"
+                                fi
+                            '''
                         }
                     }
                 }
+            }
+        }
+
+        stage('Validate Terraform Code') {
+            steps {
+                withAWS(credentials: 'aws-key', region: 'ap-southeast-2') {
+                    dir('EKS-TF') {
+                        sh 'terraform validate'
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                withAWS(credentials: 'aws-key', region: 'ap-southeast-2') {
+                    dir('EKS-TF') {
+                        sh "terraform plan -var-file='${params['File-Name']}' -lock=false"
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Action') {
+            steps {
+                withAWS(credentials: 'aws-key', region: 'ap-southeast-2') {
+                    dir('EKS-TF') {
+                        script {
+                            echo "Selected action: ${params['Terraform-Action']}"
+
+                            if (params['Terraform-Action'] == 'apply') {
+                                sh "terraform apply -auto-approve -lock=false -var-file='${params['File-Name']}'"
+                            } else if (params['Terraform-Action'] == 'destroy') {
+                                sh "terraform destroy -auto-approve -lock=false -var-file='${params['File-Name']}'"
+                            } else {
+                                error "Invalid Terraform action: ${params['Terraform-Action']}"
+                            }
+                        }
+                    }
                 }
             }
         }
