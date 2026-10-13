@@ -7,11 +7,12 @@ properties([
 
 pipeline {
     agent any
-    stages {
-stage('Checkout from Git') {
+    stage('Checkout from Git') {
     steps {
-        git branch: 'master',
+        git(
+            branch: 'master',
             url: 'https://github.com/Manjunathamanjuu/e2e-k8s-project1.git'
+        )
     }
 }
         stage('Initializing Terraform') {
