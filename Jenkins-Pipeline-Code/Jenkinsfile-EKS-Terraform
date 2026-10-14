@@ -17,12 +17,29 @@ pipeline {
     agent any
 
     stages {
-        stage('Checkout from Git') {
+        stage('Git Checkout Test') {
             steps {
-                git(
-                    branch: 'master',
-                    url: 'https://github.com/Manjunathamanjuu/e2e-k8s-project1.git'
-                )
+                deleteDir()
+
+                bat '''
+                    @echo off
+                    echo === Jenkins Windows Account ===
+                    whoami
+
+                    echo === Git Version ===
+                    "C:\\Program Files\\Git\\cmd\\git.exe" --version
+                    if errorlevel 1 exit /b 1
+
+                    echo === Clone GitHub Repository ===
+                    "C:\\Program Files\\Git\\cmd\\git.exe" clone --branch master --single-branch https://github.com/Manjunathamanjuu/e2e-k8s-project1.git checkout-test
+                    if errorlevel 1 exit /b 1
+
+                    echo === Verify Checkout ===
+                    "C:\\Program Files\\Git\\cmd\\git.exe" -C checkout-test status
+                    if errorlevel 1 exit /b 1
+
+                    echo === Checkout Test Successful ===
+                '''
             }
         }
 
@@ -32,14 +49,26 @@ pipeline {
                     credentials: 'aws-credentials',
                     region: 'ap-southeast-2'
                 ) {
-                    dir('EKS-TF') {
+                    dir('checkout-test/EKS-TF') {
                         powershell '''
+                            $ErrorActionPreference = 'Continue'
+
+                            if (-not (Get-Command terraform -ErrorAction SilentlyContinue)) {
+                                Write-Error "Terraform is not available in the Jenkins service PATH."
+                                exit 1
+                            }
+
+                            terraform --version
+                            if ($LASTEXITCODE -ne 0) {
+                                exit $LASTEXITCODE
+                            }
+
                             $output = & terraform init -no-color 2>&1
                             $status = $LASTEXITCODE
                             $output | ForEach-Object { Write-Output "$_" }
 
                             if ($status -eq 0) {
-                                Write-Output "Terraform backend initialized successfully."
+                                Write-Output "Terraform initialized successfully."
                                 exit 0
                             }
 
@@ -69,7 +98,7 @@ pipeline {
                     credentials: 'aws-credentials',
                     region: 'ap-southeast-2'
                 ) {
-                    dir('EKS-TF') {
+                    dir('checkout-test/EKS-TF') {
                         powershell '''
                             & terraform validate -no-color
                             if ($LASTEXITCODE -ne 0) {
@@ -87,30 +116,27 @@ pipeline {
                     credentials: 'aws-credentials',
                     region: 'ap-southeast-2'
                 ) {
-                    dir('EKS-TF') {
-                        powershell '''
-                            $tfvars = $env:TFVARS_FILE
+                    dir('checkout-test/EKS-TF') {
+                        withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
+                            powershell '''
+                                $tfvars = $env:TFVARS_FILE
 
-                            if ([string]::IsNullOrWhiteSpace($tfvars)) {
-                                $tfvars = 'variables.tfvars'
-                            }
+                                if ($tfvars -notmatch '^[a-zA-Z0-9_.-]+\\.tfvars$') {
+                                    Write-Error "Invalid tfvars filename."
+                                    exit 1
+                                }
 
-                            if ($tfvars -notmatch '^[a-zA-Z0-9_.-]+\\.tfvars$') {
-                                Write-Error "Invalid tfvars filename."
-                                exit 1
-                            }
+                                if (-not (Test-Path -LiteralPath $tfvars)) {
+                                    Write-Error "Variable file not found: $tfvars"
+                                    exit 1
+                                }
 
-                            if (-not (Test-Path -LiteralPath $tfvars)) {
-                                Write-Error "Variable file not found: $tfvars"
-                                exit 1
-                            }
-
-                            & terraform plan "-var-file=$tfvars" -lock=false -no-color
-
-                            if ($LASTEXITCODE -ne 0) {
-                                exit $LASTEXITCODE
-                            }
-                        '''
+                                & terraform plan "-var-file=$tfvars" -lock=false -no-color
+                                if ($LASTEXITCODE -ne 0) {
+                                    exit $LASTEXITCODE
+                                }
+                            '''
+                        }
                     }
                 }
             }
@@ -122,40 +148,40 @@ pipeline {
                     credentials: 'aws-credentials',
                     region: 'ap-southeast-2'
                 ) {
-                    dir('EKS-TF') {
+                    dir('checkout-test/EKS-TF') {
                         script {
                             echo "Selected action: ${params['Terraform-Action']}"
 
-                            withEnv([
-                                "TFVARS_FILE=${params['File-Name']}"
-                            ]) {
-                                if (params['Terraform-Action'] == 'apply') {
-                                    input(
-                                        message: 'Confirm Terraform apply. This may create or modify AWS resources.',
-                                        ok: 'Apply'
-                                    )
+                            if (params['Terraform-Action'] == 'apply') {
+                                input(
+                                    message: 'Confirm Terraform apply. This may create or modify AWS resources.',
+                                    ok: 'Apply'
+                                )
 
+                                withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
                                     powershell '''
                                         & terraform apply -auto-approve -lock=false "-var-file=$env:TFVARS_FILE" -no-color
                                         if ($LASTEXITCODE -ne 0) {
                                             exit $LASTEXITCODE
                                         }
                                     '''
-                                } else if (params['Terraform-Action'] == 'destroy') {
-                                    input(
-                                        message: 'Confirm Terraform destroy. This may delete AWS resources.',
-                                        ok: 'Destroy'
-                                    )
+                                }
+                            } else if (params['Terraform-Action'] == 'destroy') {
+                                input(
+                                    message: 'Confirm Terraform destroy. This may delete AWS resources.',
+                                    ok: 'Destroy'
+                                )
 
+                                withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
                                     powershell '''
                                         & terraform destroy -auto-approve -lock=false "-var-file=$env:TFVARS_FILE" -no-color
                                         if ($LASTEXITCODE -ne 0) {
                                             exit $LASTEXITCODE
                                         }
                                     '''
-                                } else {
-                                    error "Invalid Terraform action: ${params['Terraform-Action']}"
                                 }
+                            } else {
+                                error "Invalid Terraform action: ${params['Terraform-Action']}"
                             }
                         }
                     }
