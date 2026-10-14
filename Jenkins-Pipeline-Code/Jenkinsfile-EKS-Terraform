@@ -2,7 +2,7 @@ properties([
     parameters([
         string(
             defaultValue: 'variables.tfvars',
-            description: 'Specify the file name',
+            description: 'Specify the .tfvars file name',
             name: 'File-Name'
         ),
         choice(
@@ -28,28 +28,36 @@ pipeline {
 
         stage('Initializing Terraform') {
             steps {
-                withAWS(credentials: 'aws-credentials', region: 'us-east-1') {
+                withAWS(
+                    credentials: 'aws-credentials',
+                    region: 'ap-southeast-2'
+                ) {
                     dir('EKS-TF') {
-                        script {
-                            sh '''
-                                set +e
-                                output=$(terraform init -no-color 2>&1)
-                                status=$?
-                                set -e
+                        powershell '''
+                            $output = & terraform init -no-color 2>&1
+                            $status = $LASTEXITCODE
+                            $output | ForEach-Object { Write-Output "$_" }
 
-                                printf '%s\\n' "$output"
+                            if ($status -eq 0) {
+                                Write-Output "Terraform backend initialized successfully."
+                                exit 0
+                            }
 
-                                if [ "$status" -eq 0 ]; then
-                                    echo "Terraform backend initialized successfully."
-                                elif printf '%s\\n' "$output" | grep -Fq "Backend configuration changed"; then
-                                    echo "Backend configuration changed. Reinitializing with -reconfigure..."
-                                    terraform init -reconfigure
-                                else
-                                    echo "Terraform initialization failed."
-                                    exit "$status"
-                                fi
-                            '''
-                        }
+                            $text = $output -join "`n"
+
+                            if ($text -match "Backend configuration changed") {
+                                Write-Output "Backend configuration changed. Reinitializing..."
+                                & terraform init -reconfigure -no-color
+
+                                if ($LASTEXITCODE -ne 0) {
+                                    exit $LASTEXITCODE
+                                }
+                            }
+                            else {
+                                Write-Error "Terraform initialization failed."
+                                exit $status
+                            }
+                        '''
                     }
                 }
             }
@@ -57,9 +65,17 @@ pipeline {
 
         stage('Validate Terraform Code') {
             steps {
-                withAWS(credentials: 'aws-key', region: 'us-east-1') {
+                withAWS(
+                    credentials: 'aws-credentials',
+                    region: 'ap-southeast-2'
+                ) {
                     dir('EKS-TF') {
-                        sh 'terraform validate'
+                        powershell '''
+                            & terraform validate -no-color
+                            if ($LASTEXITCODE -ne 0) {
+                                exit $LASTEXITCODE
+                            }
+                        '''
                     }
                 }
             }
@@ -67,9 +83,34 @@ pipeline {
 
         stage('Terraform Plan') {
             steps {
-                withAWS(credentials: 'aws-key', region: 'us-east-1') {
+                withAWS(
+                    credentials: 'aws-credentials',
+                    region: 'ap-southeast-2'
+                ) {
                     dir('EKS-TF') {
-                        sh "terraform plan -var-file='${params['File-Name']}' -lock=false"
+                        powershell '''
+                            $tfvars = $env:TFVARS_FILE
+
+                            if ([string]::IsNullOrWhiteSpace($tfvars)) {
+                                $tfvars = 'variables.tfvars'
+                            }
+
+                            if ($tfvars -notmatch '^[a-zA-Z0-9_.-]+\\.tfvars$') {
+                                Write-Error "Invalid tfvars filename."
+                                exit 1
+                            }
+
+                            if (-not (Test-Path -LiteralPath $tfvars)) {
+                                Write-Error "Variable file not found: $tfvars"
+                                exit 1
+                            }
+
+                            & terraform plan "-var-file=$tfvars" -lock=false -no-color
+
+                            if ($LASTEXITCODE -ne 0) {
+                                exit $LASTEXITCODE
+                            }
+                        '''
                     }
                 }
             }
@@ -77,17 +118,44 @@ pipeline {
 
         stage('Terraform Action') {
             steps {
-                withAWS(credentials: 'aws-key', region: 'us-east-1') {
+                withAWS(
+                    credentials: 'aws-credentials',
+                    region: 'ap-southeast-2'
+                ) {
                     dir('EKS-TF') {
                         script {
                             echo "Selected action: ${params['Terraform-Action']}"
 
-                            if (params['Terraform-Action'] == 'apply') {
-                                sh "terraform apply -auto-approve -lock=false -var-file='${params['File-Name']}'"
-                            } else if (params['Terraform-Action'] == 'destroy') {
-                                sh "terraform destroy -auto-approve -lock=false -var-file='${params['File-Name']}'"
-                            } else {
-                                error "Invalid Terraform action: ${params['Terraform-Action']}"
+                            withEnv([
+                                "TFVARS_FILE=${params['File-Name']}"
+                            ]) {
+                                if (params['Terraform-Action'] == 'apply') {
+                                    input(
+                                        message: 'Confirm Terraform apply. This may create or modify AWS resources.',
+                                        ok: 'Apply'
+                                    )
+
+                                    powershell '''
+                                        & terraform apply -auto-approve -lock=false "-var-file=$env:TFVARS_FILE" -no-color
+                                        if ($LASTEXITCODE -ne 0) {
+                                            exit $LASTEXITCODE
+                                        }
+                                    '''
+                                } else if (params['Terraform-Action'] == 'destroy') {
+                                    input(
+                                        message: 'Confirm Terraform destroy. This may delete AWS resources.',
+                                        ok: 'Destroy'
+                                    )
+
+                                    powershell '''
+                                        & terraform destroy -auto-approve -lock=false "-var-file=$env:TFVARS_FILE" -no-color
+                                        if ($LASTEXITCODE -ne 0) {
+                                            exit $LASTEXITCODE
+                                        }
+                                    '''
+                                } else {
+                                    error "Invalid Terraform action: ${params['Terraform-Action']}"
+                                }
                             }
                         }
                     }
