@@ -12,7 +12,7 @@ resource "aws_eks_node_group" "eks-node-group" {
   }
 
   ami_type       = "AL2_x86_64"
-  instance_types = ["m5a.2xlarge"]
+  instance_types = ["m7i-fles.large"]
   disk_size      = 20
 
   depends_on = [
