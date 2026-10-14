@@ -96,7 +96,7 @@ pipeline {
             steps {
                 withAWS(
                     credentials: 'aws-credentials',
-                    region: 'ap-southeast-2'
+                    region: 'us-east-1'
                 ) {
                     dir('checkout-test/EKS-TF') {
                         powershell '''
@@ -114,7 +114,7 @@ pipeline {
             steps {
                 withAWS(
                     credentials: 'aws-credentials',
-                    region: 'ap-southeast-2'
+                    region: 'us-east-1'
                 ) {
                     dir('checkout-test/EKS-TF') {
                         withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
@@ -146,7 +146,7 @@ pipeline {
             steps {
                 withAWS(
                     credentials: 'aws-credentials',
-                    region: 'ap-southeast-2'
+                    region: 'us-east-1'
                 ) {
                     dir('checkout-test/EKS-TF') {
                         script {
