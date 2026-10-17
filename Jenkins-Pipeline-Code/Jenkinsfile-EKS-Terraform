@@ -1,3 +1,4 @@
+
 properties([
     parameters([
         string(
@@ -16,6 +17,11 @@ properties([
 pipeline {
     agent any
 
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
     stages {
 
         stage('Git Checkout Test') {
@@ -28,7 +34,8 @@ pipeline {
                     echo "=== Jenkins Linux Account ==="
                     whoami
 
-                    echo "=== Git Version ==="
+                    echo "=== Check Git Installation ==="
+                    command -v git
                     git --version
 
                     echo "=== Clone GitHub Repository ==="
@@ -36,21 +43,25 @@ pipeline {
                         https://github.com/Manjunathamanjuu/e2e-k8s-project1.git \
                         checkout-test
 
-                    echo "=== Verify Checkout ==="
+                    echo "=== Verify Repository ==="
                     git -C checkout-test status
+                    git -C checkout-test log -1 --oneline
 
-                    echo "=== Checkout Test Successful ==="
+                    echo "=== Verify Terraform Directory ==="
+                    test -d checkout-test/EKS-TF
+
+                    echo "=== Checkout Successful ==="
                 '''
             }
         }
 
         stage('Initializing Terraform') {
             steps {
-                withAWS(
-                    credentials: 'aws-credentials',
-                    region: 'us-east-1'
-                ) {
-                    dir('checkout-test/EKS-TF') {
+                dir('checkout-test/EKS-TF') {
+                    withAWS(
+                        credentials: 'aws-credentials',
+                        region: 'us-east-1'
+                    ) {
                         sh '''
                             set -eu
 
@@ -61,7 +72,7 @@ pipeline {
                             echo "=== Initialize Terraform ==="
                             terraform init -input=false -no-color
 
-                            echo "Terraform initialized successfully."
+                            echo "=== Terraform Init Successful ==="
                         '''
                     }
                 }
@@ -70,18 +81,18 @@ pipeline {
 
         stage('Validate Terraform Code') {
             steps {
-                withAWS(
-                    credentials: 'aws-credentials',
-                    region: 'us-east-1'
-                ) {
-                    dir('checkout-test/EKS-TF') {
+                dir('checkout-test/EKS-TF') {
+                    withAWS(
+                        credentials: 'aws-credentials',
+                        region: 'us-east-1'
+                    ) {
                         sh '''
                             set -eu
 
-                            echo "=== Validate Terraform Code ==="
+                            echo "=== Validate Terraform ==="
                             terraform validate -no-color
 
-                            echo "Terraform validation successful."
+                            echo "=== Validation Successful ==="
                         '''
                     }
                 }
@@ -90,11 +101,83 @@ pipeline {
 
         stage('Terraform Plan') {
             steps {
-                withAWS(
-                    credentials: 'aws-credentials',
-                    region: 'us-east-1'
-                ) {
-                    dir('checkout-test/EKS-TF') {
+                dir('checkout-test/EKS-TF') {
+                    withAWS(
+                        credentials: 'aws-credentials',
+                        region: 'us-east-1'
+                    ) {
+                        withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
+                            sh '''
+                                set -eu
+
+                                tfvars="$TFVARS_FILE"
+
+                                case "$tfvars" in
+                                    ""|*[!A-Za-z0-9_.-]*)
+                                        echo "ERROR: Invalid tfvars filename."
+                                        exit 1
+                                        ;;
+                                esac
+
+                                case "$tfvars" in
+                                    *.tfvars) ;;
+                                    *)
+                                        echo "ERROR: Filename must end with .tfvars"
+                                        exit 1
+                                        ;;
+                                esac
+
+                                if [ ! -f "$tfvars" ]; then
+                                    echo "ERROR: Variable file not found: $tfvars"
+                                    echo "Available tfvars files:"
+                                    find . -maxdepth 1 -type f -name '*.tfvars' -print
+                                    exit 1
+                                fi
+
+                                echo "=== Terraform Plan ==="
+
+                                terraform plan \
+                                    -input=false \
+                                    "-var-file=$tfvars" \
+                                    -no-color
+
+                                echo "=== Terraform Plan Successful ==="
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Action') {
+            steps {
+                script {
+                    def action = params['Terraform-Action']
+
+                    if (!(action in ['apply', 'destroy'])) {
+                        error("Invalid Terraform action: ${action}")
+                    }
+
+                    echo "Selected Terraform action: ${action}"
+
+                    if (action == 'apply') {
+                        input(
+                            message: 'Confirm Terraform apply. This may create or modify AWS resources.',
+                            ok: 'Apply'
+                        )
+                    } else {
+                        input(
+                            message: 'Confirm Terraform destroy. This may delete AWS resources.',
+                            ok: 'Destroy'
+                        )
+                    }
+                }
+
+                dir('checkout-test/EKS-TF') {
+                    withAWS(
+                        credentials: 'aws-credentials',
+                        region: 'us-east-1'
+                    ) {
                         withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
                             sh '''
                                 set -eu
@@ -121,123 +204,29 @@ pipeline {
                                     exit 1
                                 fi
 
-                                echo "=== Terraform Plan ==="
-                                terraform plan \
-                                    -input=false \
-                                    "-var-file=$tfvars" \
-                                    -no-color
-                            '''
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Terraform Action') {
-            steps {
-                withAWS(
-                    credentials: 'aws-credentials',
-                    region: 'us-east-1'
-                ) {
-                    dir('checkout-test/EKS-TF') {
-                        script {
-                            def action = params['Terraform-Action']
-
-                            echo "Selected action: ${action}"
-
-                            if (action == 'apply') {
-
-                                input(
-                                    message: 'Confirm Terraform apply. This may create or modify AWS resources.',
-                                    ok: 'Apply'
-                                )
-
-                                withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
-                                    sh '''
-                                        set -eu
-
-                                        tfvars="$TFVARS_FILE"
-
-                                        case "$tfvars" in
-                                            ""|*[!A-Za-z0-9_.-]*)
-                                                echo "ERROR: Invalid tfvars filename."
-                                                exit 1
-                                                ;;
-                                        esac
-
-                                        case "$tfvars" in
-                                            *.tfvars) ;;
-                                            *)
-                                                echo "ERROR: Filename must end with .tfvars"
-                                                exit 1
-                                                ;;
-                                        esac
-
-                                        if [ ! -f "$tfvars" ]; then
-                                            echo "ERROR: Variable file not found: $tfvars"
-                                            exit 1
-                                        fi
-
+                                case "$TF_ACTION" in
+                                    apply)
                                         echo "=== Terraform Apply ==="
-
                                         terraform apply \
                                             -input=false \
                                             -auto-approve \
                                             "-var-file=$tfvars" \
                                             -no-color
-
-                                        echo "Terraform apply successful."
-                                    '''
-                                }
-
-                            } else if (action == 'destroy') {
-
-                                input(
-                                    message: 'Confirm Terraform destroy. This may delete AWS resources.',
-                                    ok: 'Destroy'
-                                )
-
-                                withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
-                                    sh '''
-                                        set -eu
-
-                                        tfvars="$TFVARS_FILE"
-
-                                        case "$tfvars" in
-                                            ""|*[!A-Za-z0-9_.-]*)
-                                                echo "ERROR: Invalid tfvars filename."
-                                                exit 1
-                                                ;;
-                                        esac
-
-                                        case "$tfvars" in
-                                            *.tfvars) ;;
-                                            *)
-                                                echo "ERROR: Filename must end with .tfvars"
-                                                exit 1
-                                                ;;
-                                        esac
-
-                                        if [ ! -f "$tfvars" ]; then
-                                            echo "ERROR: Variable file not found: $tfvars"
-                                            exit 1
-                                        fi
-
+                                        ;;
+                                    destroy)
                                         echo "=== Terraform Destroy ==="
-
                                         terraform destroy \
                                             -input=false \
                                             -auto-approve \
                                             "-var-file=$tfvars" \
                                             -no-color
-
-                                        echo "Terraform destroy successful."
-                                    '''
-                                }
-
-                            } else {
-                                error "Invalid Terraform action: ${action}"
-                            }
+                                        ;;
+                                    *)
+                                        echo "ERROR: Invalid Terraform action."
+                                        exit 1
+                                        ;;
+                                esac
+                            '''
                         }
                     }
                 }
