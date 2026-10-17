@@ -15,7 +15,7 @@ pipeline {
         }
         stage('Checkout from Git') {
             steps {
-                git branch: 'master', url: 'https://github.com/bhanuprakash678910/e2e-k8s-project1.git'
+                git branch: 'master', url: 'https://github.com/Manjunathamanjuu/e2e-k8s-project1.git'
             }
         }
         stage('Sonarqube Analysis') {
@@ -87,20 +87,20 @@ pipeline {
         }
         stage('Checkout Code') {
             steps {
-                git branch: 'master', url: 'https://github.com/bhanuprakash678910/e2e-k8s-project1.git'
+                git branch: 'master', url: 'https://github.com/Manjunathamanjuu/e2e-k8s-project1.git'
             }
         }
         stage('Update Deployment file') {
             environment {
                 GIT_REPO_NAME = "e2e-k8s-project1"
-                GIT_USER_NAME = "bhanuprakash678910"
+                GIT_USER_NAME = "Manjunathamanjuu"
             }
             steps {
                 dir('Manifest-file') {
                     withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
                         sh '''
-                            git config user.email "bhanu@gmail.com"
-                            git config user.name "Bhanu-DevOps"
+                            git config user.email "manjunathahg123@gmail.com"
+                            git config user.name "Manjunathahg123@"
                             BUILD_NUMBER=${BUILD_NUMBER}
                             echo $BUILD_NUMBER
                             imageTag=$(grep -oP '(?<=tetrisv1:)[^ ]+' deployment-service.yml)
