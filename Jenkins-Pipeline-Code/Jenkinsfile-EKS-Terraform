@@ -6,7 +6,7 @@ properties([
             name: 'File-Name'
         ),
         choice(
-            choices: ['plan', 'apply', 'destroy'],
+            choices: ['apply', 'destroy'],
             description: 'Select Terraform action',
             name: 'Terraform-Action'
         )
