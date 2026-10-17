@@ -105,7 +105,9 @@ pipeline {
                         credentials: 'aws-credentials',
                         region: 'us-east-1'
                     ) {
-                        withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
+                        withEnv([
+                            "TFVARS_FILE=${params['File-Name']}"
+                        ]) {
                             sh '''
                                 set -eu
 
@@ -177,7 +179,10 @@ pipeline {
                         credentials: 'aws-credentials',
                         region: 'us-east-1'
                     ) {
-                        withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
+                        withEnv([
+                            "TFVARS_FILE=${params['File-Name']}",
+                            "TF_ACTION=${params['Terraform-Action']}"
+                        ]) {
                             sh '''
                                 set -eu
 
@@ -206,30 +211,50 @@ pipeline {
                                 case "$TF_ACTION" in
                                     apply)
                                         echo "=== Terraform Apply ==="
+
                                         terraform apply \
                                             -input=false \
                                             -auto-approve \
                                             "-var-file=$tfvars" \
                                             -no-color
                                         ;;
+
                                     destroy)
                                         echo "=== Terraform Destroy ==="
+
                                         terraform destroy \
                                             -input=false \
                                             -auto-approve \
                                             "-var-file=$tfvars" \
                                             -no-color
                                         ;;
+
                                     *)
                                         echo "ERROR: Invalid Terraform action."
                                         exit 1
                                         ;;
                                 esac
+
+                                echo "=== Terraform Action Completed Successfully ==="
                             '''
                         }
                     }
                 }
             }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline completed successfully.'
+        }
+
+        failure {
+            echo 'Pipeline failed. Check the Jenkins Console Output for details.'
+        }
+
+        always {
+            echo 'Terraform pipeline execution finished.'
         }
     }
 }
