@@ -17,28 +17,29 @@ pipeline {
     agent any
 
     stages {
+
         stage('Git Checkout Test') {
             steps {
                 deleteDir()
 
-                bat '''
-                    @echo off
-                    echo === Jenkins Windows Account ===
+                sh '''
+                    set -eu
+
+                    echo "=== Jenkins Linux Account ==="
                     whoami
 
-                    echo === Git Version ===
-                    "C:\\Program Files\\Git\\cmd\\git.exe" --version
-                    if errorlevel 1 exit /b 1
+                    echo "=== Git Version ==="
+                    git --version
 
-                    echo === Clone GitHub Repository ===
-                    "C:\\Program Files\\Git\\cmd\\git.exe" clone --branch master --single-branch https://github.com/Manjunathamanjuu/e2e-k8s-project1.git checkout-test
-                    if errorlevel 1 exit /b 1
+                    echo "=== Clone GitHub Repository ==="
+                    git clone --branch master --single-branch \
+                        https://github.com/Manjunathamanjuu/e2e-k8s-project1.git \
+                        checkout-test
 
-                    echo === Verify Checkout ===
-                    "C:\\Program Files\\Git\\cmd\\git.exe" -C checkout-test status
-                    if errorlevel 1 exit /b 1
+                    echo "=== Verify Checkout ==="
+                    git -C checkout-test status
 
-                    echo === Checkout Test Successful ===
+                    echo "=== Checkout Test Successful ==="
                 '''
             }
         }
@@ -50,29 +51,17 @@ pipeline {
                     region: 'us-east-1'
                 ) {
                     dir('checkout-test/EKS-TF') {
-                        powershell '''
-                            $ErrorActionPreference = 'Stop'
+                        sh '''
+                            set -eu
 
-                            Write-Output "=== Check Terraform Installation ==="
-                            $terraform = Get-Command terraform -ErrorAction SilentlyContinue
-
-                            if (-not $terraform) {
-                                throw "Terraform is not available in the Jenkins service PATH."
-                            }
-
+                            echo "=== Check Terraform Installation ==="
+                            command -v terraform
                             terraform --version
-                            if ($LASTEXITCODE -ne 0) {
-                                throw "Terraform version check failed."
-                            }
 
-                            Write-Output "=== Initialize Terraform ==="
+                            echo "=== Initialize Terraform ==="
                             terraform init -input=false -no-color
 
-                            if ($LASTEXITCODE -ne 0) {
-                                throw "Terraform initialization failed. Review the backend and provider errors above."
-                            }
-
-                            Write-Output "Terraform initialized successfully."
+                            echo "Terraform initialized successfully."
                         '''
                     }
                 }
@@ -86,16 +75,13 @@ pipeline {
                     region: 'us-east-1'
                 ) {
                     dir('checkout-test/EKS-TF') {
-                        powershell '''
-                            $ErrorActionPreference = 'Stop'
+                        sh '''
+                            set -eu
 
+                            echo "=== Validate Terraform Code ==="
                             terraform validate -no-color
 
-                            if ($LASTEXITCODE -ne 0) {
-                                throw "Terraform validation failed."
-                            }
-
-                            Write-Output "Terraform validation successful."
+                            echo "Terraform validation successful."
                         '''
                     }
                 }
@@ -110,24 +96,36 @@ pipeline {
                 ) {
                     dir('checkout-test/EKS-TF') {
                         withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
-                            powershell '''
-                                $ErrorActionPreference = 'Stop'
-                                $tfvars = $env:TFVARS_FILE
+                            sh '''
+                                set -eu
 
-                                if ($tfvars -notmatch '^[a-zA-Z0-9_.-]+\\.tfvars$') {
-                                    throw "Invalid tfvars filename."
-                                }
+                                tfvars="$TFVARS_FILE"
 
-                                if (-not (Test-Path -LiteralPath $tfvars -PathType Leaf)) {
-                                    throw "Variable file not found: $tfvars"
-                                }
+                                case "$tfvars" in
+                                    ""|*[!A-Za-z0-9_.-]*)
+                                        echo "ERROR: Invalid tfvars filename."
+                                        exit 1
+                                        ;;
+                                esac
 
-                                Write-Output "=== Terraform Plan ==="
-                                terraform plan -input=false "-var-file=$tfvars" -no-color
+                                case "$tfvars" in
+                                    *.tfvars) ;;
+                                    *)
+                                        echo "ERROR: Filename must end with .tfvars"
+                                        exit 1
+                                        ;;
+                                esac
 
-                                if ($LASTEXITCODE -ne 0) {
-                                    throw "Terraform plan failed."
-                                }
+                                if [ ! -f "$tfvars" ]; then
+                                    echo "ERROR: Variable file not found: $tfvars"
+                                    exit 1
+                                fi
+
+                                echo "=== Terraform Plan ==="
+                                terraform plan \
+                                    -input=false \
+                                    "-var-file=$tfvars" \
+                                    -no-color
                             '''
                         }
                     }
@@ -143,58 +141,102 @@ pipeline {
                 ) {
                     dir('checkout-test/EKS-TF') {
                         script {
-                            echo "Selected action: ${params['Terraform-Action']}"
+                            def action = params['Terraform-Action']
 
-                            if (params['Terraform-Action'] == 'apply') {
+                            echo "Selected action: ${action}"
+
+                            if (action == 'apply') {
+
                                 input(
                                     message: 'Confirm Terraform apply. This may create or modify AWS resources.',
                                     ok: 'Apply'
                                 )
 
                                 withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
-                                    powershell '''
-                                        $ErrorActionPreference = 'Stop'
-                                        $tfvars = $env:TFVARS_FILE
+                                    sh '''
+                                        set -eu
 
-                                        if ($tfvars -notmatch '^[a-zA-Z0-9_.-]+\\.tfvars$' -or
-                                            -not (Test-Path -LiteralPath $tfvars -PathType Leaf)) {
-                                            throw "Invalid or missing tfvars file."
-                                        }
+                                        tfvars="$TFVARS_FILE"
 
-                                        terraform apply -input=false -auto-approve "-var-file=$tfvars" -no-color
+                                        case "$tfvars" in
+                                            ""|*[!A-Za-z0-9_.-]*)
+                                                echo "ERROR: Invalid tfvars filename."
+                                                exit 1
+                                                ;;
+                                        esac
 
-                                        if ($LASTEXITCODE -ne 0) {
-                                            throw "Terraform apply failed."
-                                        }
+                                        case "$tfvars" in
+                                            *.tfvars) ;;
+                                            *)
+                                                echo "ERROR: Filename must end with .tfvars"
+                                                exit 1
+                                                ;;
+                                        esac
+
+                                        if [ ! -f "$tfvars" ]; then
+                                            echo "ERROR: Variable file not found: $tfvars"
+                                            exit 1
+                                        fi
+
+                                        echo "=== Terraform Apply ==="
+
+                                        terraform apply \
+                                            -input=false \
+                                            -auto-approve \
+                                            "-var-file=$tfvars" \
+                                            -no-color
+
+                                        echo "Terraform apply successful."
                                     '''
                                 }
 
-                            } else if (params['Terraform-Action'] == 'destroy') {
+                            } else if (action == 'destroy') {
+
                                 input(
                                     message: 'Confirm Terraform destroy. This may delete AWS resources.',
                                     ok: 'Destroy'
                                 )
 
                                 withEnv(["TFVARS_FILE=${params['File-Name']}"]) {
-                                    powershell '''
-                                        $ErrorActionPreference = 'Stop'
-                                        $tfvars = $env:TFVARS_FILE
+                                    sh '''
+                                        set -eu
 
-                                        if ($tfvars -notmatch '^[a-zA-Z0-9_.-]+\\.tfvars$' -or
-                                            -not (Test-Path -LiteralPath $tfvars -PathType Leaf)) {
-                                            throw "Invalid or missing tfvars file."
-                                        }
+                                        tfvars="$TFVARS_FILE"
 
-                                        terraform destroy -input=false -auto-approve "-var-file=$tfvars" -no-color
+                                        case "$tfvars" in
+                                            ""|*[!A-Za-z0-9_.-]*)
+                                                echo "ERROR: Invalid tfvars filename."
+                                                exit 1
+                                                ;;
+                                        esac
 
-                                        if ($LASTEXITCODE -ne 0) {
-                                            throw "Terraform destroy failed."
-                                        }
+                                        case "$tfvars" in
+                                            *.tfvars) ;;
+                                            *)
+                                                echo "ERROR: Filename must end with .tfvars"
+                                                exit 1
+                                                ;;
+                                        esac
+
+                                        if [ ! -f "$tfvars" ]; then
+                                            echo "ERROR: Variable file not found: $tfvars"
+                                            exit 1
+                                        fi
+
+                                        echo "=== Terraform Destroy ==="
+
+                                        terraform destroy \
+                                            -input=false \
+                                            -auto-approve \
+                                            "-var-file=$tfvars" \
+                                            -no-color
+
+                                        echo "Terraform destroy successful."
                                     '''
                                 }
 
                             } else {
-                                error "Invalid Terraform action: ${params['Terraform-Action']}"
+                                error "Invalid Terraform action: ${action}"
                             }
                         }
                     }
